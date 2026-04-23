@@ -41,6 +41,10 @@ py scripts/analyze_bin.py profile.bin
 
 # Frida-sniff what the vendor software sends to the mouse
 py scripts/sniff.py "C:\path\to\Mouse Drive Beta.exe"
+
+# Dump the mouse's current flash contents + configuration state
+# (uses the vendor's own native DLL — supply an extracted copy)
+py scripts/dump_flash.py --dll C:\path\to\costura64.hidusb.dll
 ```
 
 ## What doesn't work — be honest
@@ -79,6 +83,7 @@ For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
 | `analyze_bin.py`| Decode / diff an exported profile .bin          | No |
 | `patch_bin.py`  | Edit MouseConfig fields in a profile .bin       | No |
 | `set_fire.py`   | Set fire-button interval via raw WriteFile      | **Yes (persists)** |
+| `dump_flash.py` | Dump flash + config via hidusb.dll Read exports | No |
 
 ## Layout
 

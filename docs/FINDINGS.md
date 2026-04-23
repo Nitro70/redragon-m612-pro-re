@@ -167,6 +167,41 @@ startup specifically should surface the full read protocol.
   status blob (`06 00 00 00 00 00 0C 3E` in our capture). Might return
   dynamic data in some state we didn't reach.
 
+## Confirmed via `dump_flash.py`
+
+Calling into the native DLL's read exports yielded:
+
+- **`ReadReportRate` = 0x01**, i.e. the flash byte is set to `R_1000`
+  (from our earlier `.bin` patch). The mouse still reports at 125 Hz
+  regardless. This confirms the USB descriptor's `bInterval` is not
+  derived from the flash byte — it's baked in firmware ROM / code flash.
+- **`ReadAllFlashData` returns 6912 bytes** (0x1B00) — the full user
+  flash region, not including firmware code. Structure doesn't quite
+  match the exported `.bin` (which is 10492 bytes with a 64-byte
+  header); the vendor software transforms between the two layouts.
+- **`ReadVersion` = 3.13**. Firmware version readable without any
+  special mode.
+- **`ReadEncryption` is a challenge-response, not a stored secret.**
+  The DLL sends a 4-byte random challenge (e.g. `84 60 73 32`), the
+  mouse replies with 4 bytes (e.g. `fb 3b 8b 4c`) followed by 4 constant
+  device-ID bytes (`17 08 02 00` for our unit). The reply is computed
+  from some F(challenge, key) function where `key` lives in firmware.
+  **This is the crypto primitive used for firmware upgrade
+  authentication.** Collecting many pairs and analyzing F is the route
+  to cracking the password scheme — no password string exists to dump.
+
+### What this means for firmware modification
+
+- We have the READ side fully working.
+- For WRITE side / bootloader access, we'd still need to either:
+  1. Reverse the F(challenge, key) crypto (feasible if F is simple —
+     XOR with a byte-permuted key, small block cipher, etc. — by
+     collecting many pairs), then mint valid responses ourselves.
+  2. Or get a firmware image and its password from elsewhere, then use
+     `CS_UsbUpgrade_Start` directly.
+- Brick risk remains zero for reads, moderate-to-high for any write
+  or bootloader-entry attempts.
+
 ## Protocol mapping to other Redragon chips
 
 | Vendor chipset | VID  | Typical Redragon models | This repo applicable? |
