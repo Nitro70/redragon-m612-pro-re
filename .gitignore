@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Captured logs (may contain system-specific device paths)
+sniff.log
+sniff.prev.log
+sniff.stdout.log
+sniff.stderr.log
+*.pcap
+*.pcapng
+
+# Profile exports — contain per-device config, not useful to redistribute
+*.bin
+
+# Local tooling / editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Virtualenvs
+venv/
+.venv/
+env/
