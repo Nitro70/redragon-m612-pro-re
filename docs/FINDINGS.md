@@ -19,16 +19,13 @@ than the polling rate lets it.
   and the vendor code has UI radio buttons for 125/250/500/1000/2000/4000 Hz,
   but flashing `0x01` (= `R_1000`) via Import + replug does not change the
   USB endpoint's `bInterval`. The firmware appears to hardcode the descriptor.
-- The vendor DLL (`HIDUsb.dll`, `UsbFile.dll`) has no firmware-READ function.
-  The `EnterUsbUpdateMode` command (`08 0D`) puts the mouse into the Compx
-  bootloader, but the bootloader protocol is only exercised in one direction
-  — the DLL only knows how to send a prepared, password-protected firmware
-  blob.
-- No firmware image is shipped with the vendor software (no
-  `bin/*.bin` folder).
-- Compx firmware files are **password-protected** (`CS_SetPassward1/2`,
-  `CS_isPassward1/2` exports in `UsbFile.dll`). Even if one surfaced online
-  we'd need the password to decode it.
+- The `EnterUsbUpdateMode` command (`08 0D`) puts the mouse into the Compx
+  bootloader, but the bootloader's write protocol is
+  password-protected (`CS_SetPassward1/2`, `CS_isPassward1/2` exports),
+  and no firmware image is shipped or publicly available.
+- Changing `bInterval` requires modifying the USB descriptor inside firmware,
+  which lives in the read-only code region and can't be touched from the normal
+  HID protocol.
 
 ### What would actually work
 
@@ -40,6 +37,58 @@ than the polling rate lets it.
 
 At $25–30 retail for this mouse vs. $30 for a mouse shipping with native
 1000 Hz polling, the economics aren't compelling.
+
+## The hidusb.dll native export surface
+
+The Costura-embedded `hidusb.dll` exports **180 functions**, most of which
+are never called by the C# vendor app. This makes a difference: the native
+library has a much richer API than the decompiled .NET code suggests.
+
+Key exports we care about:
+
+| Export | Called by vendor app? | What it's probably for |
+|---|---|---|
+| `CS_UsbServer_Start`              | Yes | Start background USB worker thread |
+| `CS_UsbServer_Exit`               | Yes | Stop the thread |
+| `CS_UsbServer_ReadAllFlashData`   | **Yes** (FormMain.cs:1029) | **Read the mouse's entire flash region** |
+| `CS_UsbServer_ReadFalshData(addr,len)` | No | Read a byte range from flash |
+| `CS_UsbServer_ReadConfig`         | Yes | Read MouseConfig struct |
+| `CS_UsbServer_ReadReportRate`     | Yes | Read the current report rate byte |
+| `CS_UsbServer_ReadEncryption`     | No  | **Read encryption state / possibly the key** |
+| `CS_UsbServer_ReadVersion`        | Yes | Firmware version |
+| `CS_UsbServer_ReadDPILed`         | Yes | RGB DPI-LED config |
+| `CS_UsbServer_ReadLedBar`         | Yes | RGB main LED bar config |
+| `CS_UsbServer_ReadCidMid`         | Yes | Device ID bytes |
+| `CS_UsbServer_ReadCurrentDPI`     | Yes | Active DPI stage |
+
+All of these are void-return, async. Results arrive via the
+`OnUsbDataReceived(cmd_ptr, cmd_len, data_ptr, data_len)` callback
+registered in `CS_UsbServer_Start`.
+
+### What this means in practice
+
+- The protocol **does** support reads — we just missed them because:
+  1. The C# layer only documents a subset, and we hadn't dumped the native
+     DLL export table until after the initial RE sweep.
+  2. We never triggered a "read all" action in the vendor GUI during
+     Frida capture; our captures only covered `08 07` / `08 08` writes
+     from the Apply path.
+- **`ReadAllFlashData` is a true flash dump** of the user-facing config
+  region. It's not the firmware itself (that lives in code flash, not
+  data flash), but it's enough to:
+  - Verify what bytes the mouse is actually running from
+  - See values that never appear in `.bin` exports
+  - Catch any encrypted/hidden config not in `MouseConfig`
+- **`ReadEncryption`** is the most intriguing — if it returns the
+  encryption state the mouse expects for firmware validation, we might be
+  able to derive or match the password without needing `UsbFile.dll`.
+- To exploit these, either:
+  - Load `costura64.hidusb.dll` directly via ctypes and call the
+    exports (cleanest, gives us proper parsed results),
+  - Or re-sniff vendor startup with Frida, which already invokes
+    `ReadAllFlashData` on every launch — so the HID read commands are
+    already on the wire, we just need to look for them in a fresh
+    capture focused on startup.
 
 ## What does work
 
@@ -92,15 +141,13 @@ channel. All the `08 xx` commands we see fit a simple pattern:
 3. Firmware writes to flash (for `0x07`, `0x08`, `0x02`, `0x0F`) or reads
    (for `0x0E`, `0x12`, `0x10`) or enters a mode (`0x0D` update, `0x11`
    MTK).
-4. Firmware sends back a single 17-byte ack on the input report.
+4. Firmware sends back one or more 17-byte reports on the input endpoint.
 
-The ack is **always the same fixed stub** `08 00 01 00 ... 4C` regardless
-of what was sent. There's no read-flash-contents reply. The only way the
-software gets state back is via `GetCurrentConfig` (`0x0E`) and
-`ReadVersionID` (`0x12`), which we haven't observed returning richer data
-— the reply remained the stub in our captures. It's possible those replies
-do vary and we missed them; a more careful capture around those specific
-commands would clarify.
+In our initial capture every reply was the same `08 00 01 00 ... 4C`
+stub. We later found that the vendor app calls `CS_UsbServer_ReadAllFlashData`
+on startup — which means real data replies *do* happen on the wire, we
+just didn't capture an event that triggered them. Re-sniffing vendor
+startup specifically should surface the full read protocol.
 
 ## Interesting but untested
 

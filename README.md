@@ -91,6 +91,7 @@ For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
 └── docs/
     ├── PROTOCOL.md          HID command set and packet format
     ├── FLASHDATA_LAYOUT.md  Exported .bin structure
+    ├── NATIVE_EXPORTS.md    hidusb.dll export surface (180 functions)
     └── FINDINGS.md          What's possible and what isn't
 ```
 
