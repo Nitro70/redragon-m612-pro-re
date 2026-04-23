@@ -84,6 +84,7 @@ For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
 | `patch_bin.py`  | Edit MouseConfig fields in a profile .bin       | No |
 | `set_fire.py`   | Set fire-button interval via raw WriteFile      | **Yes (persists)** |
 | `dump_flash.py` | Dump flash + config via hidusb.dll Read exports | No |
+| `scan_flash.py` | Scan a flash dump for USB descriptors + strings | No |
 
 ## Layout
 

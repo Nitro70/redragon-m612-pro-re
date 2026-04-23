@@ -202,6 +202,38 @@ Calling into the native DLL's read exports yielded:
 - Brick risk remains zero for reads, moderate-to-high for any write
   or bootloader-entry attempts.
 
+## USB descriptors are NOT in user flash — confirmed
+
+We scanned the 6912-byte `ReadAllFlashData` dump for:
+
+- Endpoint descriptor patterns (`07 05 ...`) with plausible field values
+- Interface / configuration / device descriptor patterns (`09 04`, `09 02`, `12 01`)
+- Embedded ASCII or UTF-16LE strings
+
+**Result: zero plausible endpoint descriptors found, no meaningful strings.**
+See [`scripts/scan_flash.py`](../scripts/scan_flash.py) for the scanner.
+
+This definitively rules out the theory that `bInterval` (USB polling
+interval) could be patched by a flash write. The USB descriptors — including
+the endpoint descriptor where `bInterval=8` lives — are compiled into the
+firmware code image in ROM. The only software-accessible flash holds
+`FlashDataMap` (MouseConfig, DPI table, RGB, button mappings, macros).
+
+### Conclusion
+
+**1000 Hz polling on this mouse cannot be achieved from software.** The
+complete chain of software-layer possibilities has been checked:
+
+1. Flash byte `MouseConfig.reportRate` — firmware ignores for USB
+   descriptor generation.
+2. Hidden read-side DLL exports — work, but only return `FlashDataMap`
+   state, not descriptor bytes.
+3. USB descriptor patching via flash write — no descriptor bytes in
+   user-flash region.
+
+The only remaining path is hardware probe + firmware modification
+(see "What would actually work" above).
+
 ## Protocol mapping to other Redragon chips
 
 | Vendor chipset | VID  | Typical Redragon models | This repo applicable? |
