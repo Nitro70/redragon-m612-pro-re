@@ -1,5 +1,10 @@
 # Findings
 
+> **★ Firmware auth crypto fully broken** — the `08 01` `EncryptionData`
+> challenge–response is a 4-byte affine map with no secret key (the "key" is the
+> readable device CID/MID). Recovered and verified 406/406. See
+> [CRYPTO_BREAK.md](CRYPTO_BREAK.md).
+
 ## The 125 Hz wall
 
 The M612-PRO is hardware-capped at **~62 CPS** (clicks per second) because:
