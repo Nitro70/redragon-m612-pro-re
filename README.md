@@ -1,13 +1,51 @@
 # Redragon M612-PRO (Predator) Reverse Engineering
 
-Full HID protocol decode, Frida-based capture rig, and driver-free Python tools
-for the Redragon M612-PRO wired/wireless gaming mouse (USB VID `0x3554` /
-PID `0xF55E`, Compx/MosArt CX52850P MCU, PMW3104 sensor).
+Full HID protocol decode, a **complete break of the firmware auth crypto**, a
+Frida-based capture rig, and driver-free Python tools for the Redragon M612-PRO
+wired/wireless gaming mouse (USB VID `0x3554` / PID `0xF55E`, Compx/MosArt
+CX52850P MCU, PMW3104 sensor).
 
 No drivers installed, no kernel components used. Everything here runs as
 ordinary userland Python on Windows.
 
+## ★ Headline: the firmware auth crypto is broken
+
+The mouse's `EncryptionData` handshake (command `08 01`) — the challenge–response
+the firmware uses to prove device identity, previously an opaque function buried
+inside the vendor's `HIDUsb.dll` — is **fully recovered** as a 4-byte affine map
+over ℤ/256:
+
+```
+r0 = (K0 + c0 + c1)      & 0xFF
+r1 = (K1 + 2·c1 + c2)    & 0xFF
+r2 = (       3·c2 + c3)  & 0xFF
+r3 = ( c0 +       4·c3)  & 0xFF
+```
+
+There is **no secret key**: `(K0, K1)` are the device's own CID/MID (`0x17, 0x08`
+on this unit), which the mouse hands out unauthenticated in every reply. So the
+auth is forgeable for any `0x3554` Compx unit without ever opening it, and the map
+is a bijection (determinant 23, odd ⇒ invertible mod 256) — forgeable in both
+directions.
+
+`08 01` with a *chosen* challenge is byte-identical to the session-init packet the
+vendor software sends on every connect, so it's a safe chosen-plaintext oracle: no
+flash write, no mode change, **zero brick risk**. Recovered by probing the zero
+challenge plus all 32 single-bit challenges, then **verified 406/406** against
+fresh random challenges. Reproduce it:
+
+```powershell
+py scripts/crack.py 400   # -> "406/406 match ... F is fully recovered."
+```
+
+Full writeup: **[docs/CRYPTO_BREAK.md](docs/CRYPTO_BREAK.md)**.
+
 ## What this repo gets you
+
+- **Complete break of the firmware auth primitive** — the `08 01`
+  challenge–response reduced to four lines of arithmetic, with a chosen-plaintext
+  oracle ([`crypto_oracle.py`](scripts/crypto_oracle.py)) and a live verifier
+  ([`crack.py`](scripts/crack.py)). See [docs/CRYPTO_BREAK.md](docs/CRYPTO_BREAK.md).
 
 - Working Python tool to **set the fire-button rapid-click interval below the
   vendor GUI's 10 ms floor** (firmware accepts down to 1 ms).
@@ -29,6 +67,12 @@ pip install pywinusb frida-tools
 
 # List all HID interfaces exposed by the mouse
 py scripts/enumerate.py
+
+# Recover + verify the firmware auth crypto against your own unit
+py scripts/crack.py 400
+
+# Probe the challenge-response oracle directly (safe, read-only)
+py scripts/crypto_oracle.py linear
 
 # Set the fire-button rapid-click interval to 3 ms (below GUI floor)
 py scripts/set_fire.py 3 4 full
@@ -54,10 +98,16 @@ py scripts/dump_flash.py --dll C:\path\to\costura64.hidusb.dll
   caps at ~62 CPS regardless of what the fire-button interval is set to.
 - The vendor's DLL (`HIDUsb.dll` / `UsbFile.dll`) has no firmware-read
   function — only write. You can't dump firmware from software alone.
-- Compx firmware files are password-protected (`CS_SetPassward1/2`).
-- No firmware images are shipped with the vendor software.
+- No firmware images are shipped with the vendor software, so even with the auth
+  crypto broken there's no code image to patch the `bInterval` byte in.
+- The offline upgrade-file container is protected by a **separate** layer —
+  `UsbFile.dll` (`CS_SetPassward1/2`) plus `AES.dll` — which is independent of the
+  on-wire `08 01` auth recovered here and remains unbroken.
 
-For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
+Cracking the auth crypto is **necessary but not sufficient** for 1000 Hz: it opens
+any host- or bootloader-side check that expects `F(challenge)`, but the firmware
+image and the file-container crypto are still in the way. For full reasoning see
+[docs/FINDINGS.md](docs/FINDINGS.md) and [docs/CRYPTO_BREAK.md](docs/CRYPTO_BREAK.md).
 
 ## Hardware targeted
 
@@ -77,6 +127,8 @@ For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
 
 | Script | Purpose | Writes to mouse? |
 |---|---|---|
+| `crypto_oracle.py` | Chosen-plaintext oracle on the `08 01` auth primitive | No (read-only probes) |
+| `crack.py`      | Recovered auth model + live verification vs N challenges | No (read-only probes) |
 | `enumerate.py`  | List HID interfaces + feature reports           | No |
 | `probe.py`      | Send candidate read-config commands             | No (pokes only) |
 | `sniff.py`      | Frida-hook vendor software, log HID writes      | No |
@@ -95,6 +147,7 @@ For full reasoning see [docs/FINDINGS.md](docs/FINDINGS.md).
 ├── .gitignore
 ├── scripts/            Python tools (above)
 └── docs/
+    ├── CRYPTO_BREAK.md      Full break of the 08 01 firmware auth primitive
     ├── PROTOCOL.md          HID command set and packet format
     ├── FLASHDATA_LAYOUT.md  Exported .bin structure
     ├── NATIVE_EXPORTS.md    hidusb.dll export surface (180 functions)
